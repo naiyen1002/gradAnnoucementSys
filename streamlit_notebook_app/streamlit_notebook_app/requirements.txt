@@ -1,9 +1,0 @@
-cv2
-email
-face_recognition
-pandas
-pyzbar
-qrcode
-smtplib
-streamlit
-ultralytics
