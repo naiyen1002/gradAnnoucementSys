@@ -1,9 +1,7 @@
-cv2
-email
-face_recognition
-pandas
-pyzbar
-qrcode
-smtplib
 streamlit
+pandas
+qrcode
+pyzbar
+face_recognition
 ultralytics
+opencv-python
