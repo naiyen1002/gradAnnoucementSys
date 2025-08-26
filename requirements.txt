@@ -1,7 +1,0 @@
-streamlit
-pandas
-qrcode
-pyzbar
-face_recognition
-ultralytics
-opencv-python
