@@ -3,7 +3,7 @@ qrcode
 opencv-python-headless
 pandas
 numpy
-face-recognition==1.3.0
+face_recognition @ git+https://github.com/thetoby9944/face_recognition
 ultralytics
 pyzbar
 streamlit
@@ -11,8 +11,6 @@ streamlit-option-menu
 streamlit-aggrid
 gTTS
 openpyxl
-
-
 
 # Not necessary, so far Mac required
 # If got Torch issue with Unavailable FACE SCAN, then try these in terminal
