@@ -10,6 +10,9 @@ streamlit-aggrid
 gTTS
 openpyxl
 deepface
+tensorflow==2.20.0
+tf-keras
+
 
 
 # Not necessary, so far Mac required
