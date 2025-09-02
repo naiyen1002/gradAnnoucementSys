@@ -17,7 +17,6 @@ import pandas as pd
 import numpy as np
 import face_recognition
 from ultralytics import YOLO
-from pyzbar.pyzbar import decode
 import streamlit as st
 from streamlit_option_menu import option_menu
 from background import set_bg
