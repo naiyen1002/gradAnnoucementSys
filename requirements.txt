@@ -9,9 +9,10 @@ streamlit-option-menu
 streamlit-aggrid
 gTTS
 openpyxl
-deepface
-tensorflow==2.20.0
-tf-keras
+tensorflow==2.15.0
+keras==2.15.0
+deepface==0.0.93
+
 
 
 
