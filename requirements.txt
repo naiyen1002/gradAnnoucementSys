@@ -1,9 +1,9 @@
+tensorflow-cpu==2.15.0
+keras==2.15.0
+deepface==0.0.93
 opencv-python-headless
 pandas
 numpy
-deepface==0.0.93
-tensorflow==2.15.0
-keras==2.15.0
 ultralytics
 streamlit
 streamlit-option-menu
