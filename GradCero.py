@@ -569,6 +569,15 @@ if menu == "Dashboard (Scan & Verification)":
 
     set_bg("bckground/graduation_bg.jpg")
 
+    # 🔑 Create WebRTC camera once here
+    camera_ctx = webrtc_streamer(
+        key="camera",
+        mode="sendrecv",
+        rtc_configuration=RTC_CONFIGURATION,
+        media_stream_constraints={"video": True, "audio": False},
+        video_processor_factory=CameraProcessor,
+    )
+
     st.markdown(
         """
         <h2 style='text-align: center; padding:0 0 30px 0;'>Scan & Verify Students</h1><hr style='margin:0 0 40px 0;'>""",
@@ -627,7 +636,7 @@ if menu == "Dashboard (Scan & Verification)":
                           on_click=start_scanning)
 
         if st.session_state["scanning_started"] and st.session_state.get("student_id") is None:
-            camera_ctx = init_camera()
+
             student_id, name, course, image_path = scan_qr_and_get_student(camera_ctx)
             if student_id:
                 st.session_state["student_id"] = student_id
