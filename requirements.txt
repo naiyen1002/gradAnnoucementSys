@@ -1,4 +1,4 @@
-pyttsx
+pyttsx3
 qrcode
 opencv-python
 pandas
