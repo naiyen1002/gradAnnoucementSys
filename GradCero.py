@@ -25,6 +25,39 @@ from io import BytesIO
 from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, RTCConfiguration
 import av
 
+# ========================
+# Camera via WebRTC (Streamlit Cloud friendly)
+# ========================
+RTC_CONFIGURATION = RTCConfiguration(
+    {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
+)
+
+
+class CameraProcessor(VideoProcessorBase):
+    def __init__(self):
+        self.latest_frame = None
+
+    def recv(self, frame):
+        img = frame.to_ndarray(format="bgr24")
+        self.latest_frame = img
+        return av.VideoFrame.from_ndarray(img, format="bgr24")
+
+
+def init_camera():
+    return webrtc_streamer(
+        key="camera",
+        mode="sendrecv",
+        rtc_configuration=RTC_CONFIGURATION,
+        media_stream_constraints={"video": True, "audio": False},
+        video_processor_factory=CameraProcessor,
+    )
+
+
+def get_camera_frame(ctx):
+    if ctx and ctx.video_processor:
+        return ctx.video_processor.latest_frame
+    return None
+
 
 # ==============================================================================
 # macOS required only due to not self-located, comment section this on Windows
@@ -160,127 +193,91 @@ def generate_ind_qr(student_id, name, email):
     server.quit()
 
 # ========================
-# Camera Processor that access camera frame in Streamlit Cloud
-# ========================
-
-RTC_CONFIGURATION = RTCConfiguration(
-    {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
-)
-
-class CameraProcessor(VideoProcessorBase):
-    def __init__(self):
-        self.latest_frame = None
-
-    def recv(self, frame):
-        img = frame.to_ndarray(format="bgr24")
-        self.latest_frame = img
-        return av.VideoFrame.from_ndarray(img, format="bgr24")
-
-
-# Initialize once in the app
-camera_ctx = webrtc_streamer(
-    key="camera",
-    mode="sendrecv",
-    rtc_configuration=RTC_CONFIGURATION,
-    media_stream_constraints={"video": True, "audio": False},
-    video_processor_factory=CameraProcessor,
-)
-
-def get_camera_frame():
-    """Return the latest webcam frame if available."""
-    if camera_ctx and camera_ctx.video_processor:
-        return camera_ctx.video_processor.latest_frame
-    return None
-# ========================
 # QR Code Scan
 # ========================
 
-def scan_qr_and_get_student():
-    df = pd.read_excel("studentdb.xlsx")
 
+def scan_qr_and_get_student(camera_ctx):
+    df = pd.read_excel("studentdb.xlsx")
     st.info("Scanning for QR code...")
     st_frame = st.empty()
+
     student_id, name, course, image_path = None, None, None, None
+    frame = get_camera_frame(camera_ctx)
+    if frame is None:
+        return None, None, None, None
 
-    while True:
-        frame = get_camera_frame()
-        if frame is None:
-            continue  # wait until WebRTC provides a frame
+    decoded_objs = decode(frame)
+    for obj in decoded_objs:
+        qr_data = obj.data.decode("utf-8").strip()
+        parts = qr_data.split("|")
+        if len(parts) < 2:
+            st.warning(f"QR code format invalid: '{qr_data}'")
+            continue
 
-        decoded_objs = decode(frame)
-        for obj in decoded_objs:
-            qr_data = obj.data.decode('utf-8').strip()
-            parts = qr_data.split('|')
-            if len(parts) < 2:
-                st.warning(f"QR code format invalid: '{qr_data}'")
-                continue
+        student_id, name = parts[0].strip(), parts[1].strip()
+        match = df[(df["student_id"] == student_id) & (df["name"] == name)]
 
-            student_id, name = parts[0].strip(), parts[1].strip()
-            match = df[(df['student_id'] == student_id) & (df['name'] == name)]
+        if not match.empty:
+            course = match.iloc[0]["course"]
+            image_path = match.iloc[0]["image_path"]
 
-            if not match.empty:
-                course = match.iloc[0]['course']
-                image_path = match.iloc[0]['image_path']
+            if not os.path.exists(image_path):
+                st.error(f"Image file not found: {image_path}")
+                return None, None, None, None
 
-                if not os.path.exists(image_path):
-                    st.error(f"Image file not found: {image_path}")
-                    return None, None, None, None
+            with open(image_path, "rb") as f:
+                image_path = f.read()
 
-                with open(image_path, "rb") as f:
-                    image_bytes = f.read()
+            st.success("Match found in Excel.")
+            return student_id, name, course, image_path
+        else:
+            st.error("No match found in Excel.")
 
-                st.success("Match found in Excel.")
-                return student_id, name, course, image_bytes
-            else:
-                st.error("No match found in Excel.")
-
-        st_frame.image(frame, channels="BGR", caption="QR Scanner")
+    st_frame.image(frame, channels="BGR", caption="QR Scanner")
+    return None, None, None, None
 
 
 # ========================
 # Face Recognition
 # ========================
 
-def face_match_with_qr(proper_name, image_path):
+def face_match_with_qr(camera_ctx, proper_name, image_path):
     TOLERANCE = 0.50
 
     def ui_conf(distance, thresh=TOLERANCE):
         return 100.0 / (1.0 + math.exp(8 * (float(distance) - float(thresh))))
 
     yolo_model = YOLO("yolov8n-face.pt")
-    # image_path is bytes from excel so need to convert back to np array
+
+    # Decode reference image (bytes from Excel)
     nparr = np.frombuffer(image_path, np.uint8)
-    # ref_image is now cv image
     ref_image = cv.imdecode(nparr, cv.IMREAD_COLOR)
-    # Convert BGR to RGB
     ref_rgb = cv.cvtColor(ref_image, cv.COLOR_BGR2RGB)
-    # Get face encodings
+
     ref_encodings = face_recognition.face_encodings(ref_rgb)
     if not ref_encodings:
         st.error("No face found in reference image.")
         return None
-
     ref_encoding = ref_encodings[0]
-    matched = None
-    countdown = 3
+
     st.info("Adjust your face... capturing in 3 seconds")
     st_frame = st.empty()
 
-    frame = None
-    while countdown > 0:
-        frame = get_camera_frame()
+    # countdown loop
+    for countdown in range(3, 0, -1):
+        frame = get_camera_frame(camera_ctx)
         if frame is None:
             continue
         cv.putText(frame, f"Capturing in {countdown}s", (50, 70),
                    cv.FONT_HERSHEY_SIMPLEX, 1.2, (255, 0, 127), 3)
         st_frame.image(frame, channels="BGR", caption="Face Recognition")
         time.sleep(1)
-        countdown -= 1
 
-    frame = get_camera_frame()
+    frame = get_camera_frame(camera_ctx)
     if frame is None:
-        st.error("No camera detected or face not captured.")
-        st.stop()
+        st.error("No camera frame captured.")
+        return None
 
     raw_frame = frame.copy()
     results = yolo_model(frame, verbose=False)
@@ -293,13 +290,14 @@ def face_match_with_qr(proper_name, image_path):
             if area > largest_area:
                 largest_area, best_box = area, (x1, y1, x2, y2)
 
+    matched = None
     if best_box:
         x1, y1, x2, y2 = best_box
         face_roi = raw_frame[y1:y2, x1:x2]
         rgb_face = cv.cvtColor(face_roi, cv.COLOR_BGR2RGB)
         encodings = face_recognition.face_encodings(rgb_face)
-        display_name, label_extra, color = "Unknown", "", (0, 0, 255)
 
+        display_name, label_extra, color = "Unknown", "", (0, 0, 255)
         if encodings:
             face_distances = float(face_recognition.face_distance(
                 [ref_encoding], encodings[0])[0])
@@ -308,29 +306,26 @@ def face_match_with_qr(proper_name, image_path):
 
             if is_match:
                 display_name, color, matched = proper_name, (34, 139, 34), True
-                st.success(
-                    f"Face matched: {display_name} (dist = {face_distances:.3f} | conf ~ {conf:.0f}%)")
+                st.success(f"Face matched: {display_name} "
+                           f"(dist={face_distances:.3f} | conf~{conf:.0f}%)")
                 announce_name(display_name)
-                matched = True
             else:
-                st.error(
-                    f"Face does not match reference (dist = {face_distances:.3f} | conf ~ {conf:.0f}%)")
+                st.error(f"Face does not match reference "
+                         f"(dist={face_distances:.3f} | conf~{conf:.0f}%)")
                 matched = False
 
-            label_extra = f" | dist = {face_distances:.3f} | conf ~ {conf:.0f}%"
+            label_extra = f" | dist={face_distances:.3f} | conf~{conf:.0f}%"
         else:
-            st.warning(
-                "No face encoding from camera frame. Try better lighting / frontal pose.")
+            st.warning("No face encoding from camera frame.")
             matched = None
 
         cv.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-        cv.putText(frame, f"{display_name}{label_extra}", (x1, max(20, y1 - 10)),
-                   cv.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
+        cv.putText(frame, f"{display_name}{label_extra}",
+                   (x1, max(20, y1 - 10)), cv.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
         st_frame.image(frame, channels="BGR", caption="Face Recognition")
     else:
-        st.warning("No face detected. Please move closer and face the camera.")
+        st.warning("No face detected. Please move closer.")
         st_frame.image(frame, channels="BGR", caption="Face Recognition")
-        matched = None
 
     return matched
 
@@ -583,14 +578,14 @@ if menu == "Dashboard (Scan & Verification)":
     st.markdown(
         """
         <style>
-        div.stButton > button { 
-            display: block; 
-            margin: 0 auto; 
-            border: 1px solid #57ffe0 !important; 
+        div.stButton > button {
+            display: block;
+            margin: 0 auto;
+            border: 1px solid #57ffe0 !important;
             color: #57ffe0 !important;
         }
         div.stButton > button:hover {
-            border: 1px solid #fae100 !important; 
+            border: 1px solid #fae100 !important;
             color: #fae100 !important;
         }
         </style>
@@ -632,7 +627,8 @@ if menu == "Dashboard (Scan & Verification)":
                           on_click=start_scanning)
 
         if st.session_state["scanning_started"] and st.session_state.get("student_id") is None:
-            student_id, name, course, image_path = scan_qr_and_get_student()
+            camera_ctx = init_camera()
+            student_id, name, course, image_path = scan_qr_and_get_student(camera_ctx)
             if student_id:
                 st.session_state["student_id"] = student_id
                 st.session_state["name"] = name
@@ -647,10 +643,7 @@ if menu == "Dashboard (Scan & Verification)":
             if st.session_state["student_id"]:
 
                 if st.session_state["face_verified"] is None:
-                    result = face_match_with_qr(
-                        st.session_state["name"],
-                        st.session_state["image_path"]
-                    )
+                    result = face_match_with_qr(camera_ctx, st.session_state["name"], st.session_state["image_path"])
                     st.session_state["face_verified"] = result
 
                 if st.session_state["face_verified"] is True:
