@@ -652,13 +652,13 @@ if menu == "Dashboard (Scan & Verification)":
         st.subheader("Facial Recognition")
 
         with st.container() as face_scan_container:
-        if st.session_state["student_id"]:
-            if st.session_state["face_verified"] is None:
-                result = face_match_with_qr(
-                    st.session_state["name"],
-                    st.session_state["image_path"],
-                    st.session_state["cam_ctx"],     # <--- pass camera ctx here
-        )
+            if st.session_state["student_id"]:
+                if st.session_state["face_verified"] is None:
+                    result = face_match_with_qr(
+                        st.session_state["name"],
+                        st.session_state["image_path"],
+                        st.session_state["cam_ctx"],     # <--- pass camera ctx here`
+                    )
         st.session_state["face_verified"] = result
                 if st.session_state["face_verified"] is True:
                     show_success_result(
