@@ -22,7 +22,7 @@ from streamlit_option_menu import option_menu
 from background import set_bg
 from gtts import gTTS
 from io import BytesIO
-from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, RTCConfiguration
+from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, RTCConfiguration, WebRtcMode
 import av
 
 # ========================
@@ -570,13 +570,14 @@ if menu == "Dashboard (Scan & Verification)":
     set_bg("bckground/graduation_bg.jpg")
 
     # 🔑 Create WebRTC camera once here
-    camera_ctx = webrtc_streamer(
+   camera_ctx = webrtc_streamer(
         key="camera",
-        mode="sendrecv",
+        mode=WebRtcMode.SENDRECV,   # <-- not "sendrecv"
         rtc_configuration=RTC_CONFIGURATION,
         media_stream_constraints={"video": True, "audio": False},
         video_processor_factory=CameraProcessor,
     )
+
 
     st.markdown(
         """
