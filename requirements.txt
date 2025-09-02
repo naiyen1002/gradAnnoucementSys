@@ -11,9 +11,7 @@ gTTS
 openpyxl
 qrcode
 
-
-
-
+ 
 
 # Not necessary, so far Mac required
 # If got Torch issue with Unavailable FACE SCAN, then try these in terminal
