@@ -14,13 +14,14 @@ import os
 import cv2 as cv
 import pandas as pd
 import numpy as np
+import face_recognition
 from ultralytics import YOLO
+from pyzbar.pyzbar import decode
 import streamlit as st
 from streamlit_option_menu import option_menu
 from background import set_bg
 from gtts import gTTS
 from io import BytesIO
-from deepface import DeepFace
 
 # ==============================================================================
 # macOS required only due to not self-located, comment section this on Windows
@@ -167,21 +168,17 @@ def scan_qr_and_get_student():
     st.info("Scanning for QR code...")
 
     st_frame = st.empty()
-    qr_detector = cv.QRCodeDetector()
-
-    student_id, name, course, image_bytes = None, None, None, None
+    student_id, name, course, image_path = None, None, None, None
 
     while True:
         ret, frame = cap.read()
         if not ret:
             break
 
-        # Detect and decode QR using OpenCV (no zbar needed)
-        data, bbox, _ = qr_detector.detectAndDecode(frame)
-        if bbox is not None and data:
-            qr_data = data.strip()
+        decoded_objs = decode(frame)
+        for obj in decoded_objs:
+            qr_data = obj.data.decode('utf-8').strip()
             parts = qr_data.split('|')
-
             if len(parts) < 2:
                 st.warning(f"QR code format invalid: '{qr_data}'")
                 continue
@@ -198,11 +195,11 @@ def scan_qr_and_get_student():
                     return None, None, None, None
 
                 with open(image_path, "rb") as f:
-                    image_bytes = f.read()
+                    image_path = f.read()
 
                 st.success("Match found in Excel.")
                 cap.release()
-                return student_id, name, course, image_bytes
+                return student_id, name, course, image_path
             else:
                 st.error("No match found in Excel.")
 
@@ -217,26 +214,32 @@ def scan_qr_and_get_student():
 # ========================
 
 def face_match_with_qr(proper_name, image_path):
-    """
-    Compare reference image (from Excel bytes) with live camera capture using DeepFace.
-    """
+    TOLERANCE = 0.50
 
-    # Convert Excel image bytes into OpenCV format
+    def ui_conf(distance, thresh=TOLERANCE):
+        return 100.0 / (1.0 + math.exp(8 * (float(distance) - float(thresh))))
+
+    yolo_model = YOLO("yolov8n-face.pt")
+    # image_path is bytes from excel so need to convert back to np array
     nparr = np.frombuffer(image_path, np.uint8)
+    # ref_image is now cv image
     ref_image = cv.imdecode(nparr, cv.IMREAD_COLOR)
+    # Convert BGR to RGB
+    ref_rgb = cv.cvtColor(ref_image, cv.COLOR_BGR2RGB)
+    # Get face encodings
+    ref_encodings = face_recognition.face_encodings(ref_rgb)
+    if not ref_encodings:
+        st.error("No face found in reference image.")
+        return None
 
-    # Save reference temporarily (DeepFace requires file paths or numpy arrays)
-    ref_path = "ref_face.jpg"
-    cv.imwrite(ref_path, ref_image)
-
+    ref_encoding = ref_encodings[0]
     matched = None
     countdown = 3
-    st.info("Adjust your face... capturing in 3 seconds")
 
+    st.info("Adjust your face... capturing in 3 seconds")
     st_frame = st.empty()
     cap = cv.VideoCapture(0)
 
-    # Countdown display
     while countdown > 0:
         ret, frame = cap.read()
         if not ret:
@@ -247,38 +250,63 @@ def face_match_with_qr(proper_name, image_path):
         time.sleep(1)
         countdown -= 1
 
-    # Capture final frame
     ret, frame = cap.read()
-    cap.release()
     if not ret:
         st.error("No camera detected or face not captured.")
-        return None
+        cap.release()
+        st.stop()
 
-    live_path = "live_face.jpg"
-    cv.imwrite(live_path, frame)
+    raw_frame = frame.copy()
+    results = yolo_model(frame, verbose=False)
+    largest_area, best_box = 0, None
 
-    try:
-        # Perform face verification with DeepFace
-        result = DeepFace.verify(
-            img1_path=ref_path, img2_path=live_path, model_name="Facenet")
+    for r in results:
+        for box in r.boxes:
+            x1, y1, x2, y2 = box.xyxy[0].int().tolist()
+            area = (x2 - x1) * (y2 - y1)
+            if area > largest_area:
+                largest_area, best_box = area, (x1, y1, x2, y2)
 
-        if result["verified"]:
-            st.success(f"Face matched: {proper_name} "
-                       f"(dist = {result['distance']:.3f}, model={result['model']})")
-            announce_name(proper_name)  # 🔊 announce if matched
-            matched = True
+    if best_box:
+        x1, y1, x2, y2 = best_box
+        face_roi = raw_frame[y1:y2, x1:x2]
+        rgb_face = cv.cvtColor(face_roi, cv.COLOR_BGR2RGB)
+        encodings = face_recognition.face_encodings(rgb_face)
+        display_name, label_extra, color = "Unknown", "", (0, 0, 255)
+
+        if encodings:
+            face_distances = float(face_recognition.face_distance(
+                [ref_encoding], encodings[0])[0])
+            conf = ui_conf(face_distances, TOLERANCE)
+            is_match = face_distances <= TOLERANCE
+
+            if is_match:
+                display_name, color, matched = proper_name, (34, 139, 34), True
+                st.success(
+                    f"Face matched: {display_name} (dist = {face_distances:.3f} | conf ~ {conf:.0f}%)")
+                announce_name(display_name)
+                matched = True
+            else:
+                st.error(
+                    f"Face does not match reference (dist = {face_distances:.3f} | conf ~ {conf:.0f}%)")
+                matched = False
+
+            label_extra = f" | dist = {face_distances:.3f} | conf ~ {conf:.0f}%"
         else:
-            st.error(f"Face does not match reference "
-                     f"(dist = {result['distance']:.3f}, model={result['model']})")
-            matched = False
+            st.warning(
+                "No face encoding from camera frame. Try better lighting / frontal pose.")
+            matched = None
 
-        # Show annotated live image
+        cv.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+        cv.putText(frame, f"{display_name}{label_extra}", (x1, max(20, y1 - 10)),
+                   cv.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
         st_frame.image(frame, channels="BGR", caption="Face Recognition")
-
-    except Exception as e:
-        st.error(f"Verification error: {e}")
+    else:
+        st.warning("No face detected. Please move closer and face the camera.")
+        st_frame.image(frame, channels="BGR", caption="Face Recognition")
         matched = None
 
+    cap.release()
     return matched
 
 # ========================

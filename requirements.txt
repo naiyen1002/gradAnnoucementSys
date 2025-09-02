@@ -1,20 +1,19 @@
-tensorflow-cpu==2.15.0
-keras==2.15.0
-deepface==0.0.93
-opencv-python-headless
+pyttsx
+qrcode
+opencv-python
 pandas
 numpy
+face-recognition
 ultralytics
+pyzbar
 streamlit
 streamlit-option-menu
+streamlit-aggrid
 gTTS
 openpyxl
-qrcode
-
- 
 
 # Not necessary, so far Mac required
 # If got Torch issue with Unavailable FACE SCAN, then try these in terminal
-# pip install
+# pip install --upgrade ultralytics
 # rm -rf ~/.cache/torch_extensions
 # pip install --upgrade torch ultralytics
