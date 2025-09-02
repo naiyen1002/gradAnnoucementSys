@@ -3,7 +3,7 @@ qrcode
 opencv-python-headless
 pandas
 numpy
-face_recognition @ git+https://github.com/thetoby9944/face_recognition
+face_recognition @ git+https://github.com/naiyen1002/face_recognition
 ultralytics
 pyzbar
 streamlit
