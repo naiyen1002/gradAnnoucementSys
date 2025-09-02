@@ -1,16 +1,16 @@
-pyttsx3
+pyttsx
 qrcode
-opencv-python-headless
+opencv-python
 pandas
 numpy
 ultralytics
-pyzbar
 streamlit
 streamlit-option-menu
 streamlit-aggrid
 gTTS
 openpyxl
 deepface
+
 
 # Not necessary, so far Mac required
 # If got Torch issue with Unavailable FACE SCAN, then try these in terminal

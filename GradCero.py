@@ -170,17 +170,21 @@ def scan_qr_and_get_student():
     st.info("Scanning for QR code...")
 
     st_frame = st.empty()
-    student_id, name, course, image_path = None, None, None, None
+    qr_detector = cv.QRCodeDetector()
+
+    student_id, name, course, image_bytes = None, None, None, None
 
     while True:
         ret, frame = cap.read()
         if not ret:
             break
 
-        decoded_objs = decode(frame)
-        for obj in decoded_objs:
-            qr_data = obj.data.decode('utf-8').strip()
+        # Detect and decode QR using OpenCV (no zbar needed)
+        data, bbox, _ = qr_detector.detectAndDecode(frame)
+        if bbox is not None and data:
+            qr_data = data.strip()
             parts = qr_data.split('|')
+
             if len(parts) < 2:
                 st.warning(f"QR code format invalid: '{qr_data}'")
                 continue
@@ -197,11 +201,11 @@ def scan_qr_and_get_student():
                     return None, None, None, None
 
                 with open(image_path, "rb") as f:
-                    image_path = f.read()
+                    image_bytes = f.read()
 
                 st.success("Match found in Excel.")
                 cap.release()
-                return student_id, name, course, image_path
+                return student_id, name, course, image_bytes
             else:
                 st.error("No match found in Excel.")
 
