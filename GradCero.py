@@ -163,30 +163,38 @@ def generate_ind_qr(student_id, name, email):
 # Camera Processor that access camera frame in Streamlit Cloud
 # ========================
 
-# Google STUN server to avoid ICE issues on cloud
+# ========================
+# WebRTC Camera Integration
+# ========================
+from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, RTCConfiguration
+import av
+
 RTC_CONFIGURATION = RTCConfiguration(
     {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
 )
 
 class CameraProcessor(VideoProcessorBase):
     def __init__(self):
-        self.frame = None
+        self.latest_frame = None
 
     def recv(self, frame):
         img = frame.to_ndarray(format="bgr24")
-        self.frame = img  # save latest frame
+        self.latest_frame = img
         return av.VideoFrame.from_ndarray(img, format="bgr24")
 
+# Create global context once
+ctx = webrtc_streamer(
+    key="camera",
+    mode="sendrecv",
+    rtc_configuration=RTC_CONFIGURATION,
+    media_stream_constraints={"video": True, "audio": False},
+    video_processor_factory=CameraProcessor,
+)
+
 def get_camera_frame():
-    ctx = webrtc_streamer(
-        key="camera",
-        mode="sendrecv",
-        rtc_configuration=RTC_CONFIGURATION,
-        media_stream_constraints={"video": True, "audio": False},
-        video_processor_factory=CameraProcessor,
-    )
-    if ctx.video_processor:
-        return ctx.video_processor.frame
+    """Return latest frame from WebRTC (or None if not ready)."""
+    if ctx and ctx.video_processor and ctx.video_processor.latest_frame is not None:
+        return ctx.video_processor.latest_frame.copy()
     return None
 
 
@@ -197,17 +205,15 @@ def get_camera_frame():
 def scan_qr_and_get_student():
     df = pd.read_excel("studentdb.xlsx")
 
-    cap = cv.VideoCapture(0)
     st.info("Scanning for QR code...")
-
     st_frame = st.empty()
     student_id, name, course, image_path = None, None, None, None
 
     while True:
         frame = get_camera_frame()
         if frame is None:
-            continue  # no frame yet, wait for stream
-    
+            continue  # wait until WebRTC provides a frame
+
         decoded_objs = decode(frame)
         for obj in decoded_objs:
             qr_data = obj.data.decode('utf-8').strip()
@@ -228,18 +234,14 @@ def scan_qr_and_get_student():
                     return None, None, None, None
 
                 with open(image_path, "rb") as f:
-                    image_path = f.read()
+                    image_bytes = f.read()
 
                 st.success("Match found in Excel.")
-                cap.release()
-                return student_id, name, course, image_path
+                return student_id, name, course, image_bytes
             else:
                 st.error("No match found in Excel.")
 
         st_frame.image(frame, channels="BGR", caption="QR Scanner")
-
-    cap.release()
-    return None, None, None, None
 
 
 # ========================
@@ -268,25 +270,23 @@ def face_match_with_qr(proper_name, image_path):
     ref_encoding = ref_encodings[0]
     matched = None
     countdown = 3
-
     st.info("Adjust your face... capturing in 3 seconds")
     st_frame = st.empty()
-    cap = cv.VideoCapture(0)
 
+    frame = None
     while countdown > 0:
         frame = get_camera_frame()
-        if not frame:
-            break
+        if frame is None:
+            continue
         cv.putText(frame, f"Capturing in {countdown}s", (50, 70),
                    cv.FONT_HERSHEY_SIMPLEX, 1.2, (255, 0, 127), 3)
         st_frame.image(frame, channels="BGR", caption="Face Recognition")
         time.sleep(1)
         countdown -= 1
 
-        frame = get_camera_frame()
-    if not ret:
+    frame = get_camera_frame()
+    if frame is None:
         st.error("No camera detected or face not captured.")
-        cap.release()
         st.stop()
 
     raw_frame = frame.copy()
@@ -339,7 +339,6 @@ def face_match_with_qr(proper_name, image_path):
         st_frame.image(frame, channels="BGR", caption="Face Recognition")
         matched = None
 
-    cap.release()
     return matched
 
 # ========================
