@@ -177,16 +177,19 @@ class CameraProcessor(VideoProcessorBase):
         return av.VideoFrame.from_ndarray(img, format="bgr24")
 
 
+# Initialize once in the app
+camera_ctx = webrtc_streamer(
+    key="camera",
+    mode="sendrecv",
+    rtc_configuration=RTC_CONFIGURATION,
+    media_stream_constraints={"video": True, "audio": False},
+    video_processor_factory=CameraProcessor,
+)
+
 def get_camera_frame():
-    ctx = webrtc_streamer(
-        key="camera",
-        mode="sendrecv",
-        rtc_configuration=RTC_CONFIGURATION,
-        media_stream_constraints={"video": True, "audio": False},
-        video_processor_factory=CameraProcessor,
-    )
-    if ctx and ctx.video_processor and ctx.video_processor.latest_frame is not None:
-        return ctx.video_processor.latest_frame.copy()
+    """Return the latest webcam frame if available."""
+    if camera_ctx and camera_ctx.video_processor:
+        return camera_ctx.video_processor.latest_frame
     return None
 # ========================
 # QR Code Scan
