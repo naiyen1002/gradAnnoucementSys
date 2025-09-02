@@ -1,17 +1,16 @@
-pyttsx3
-qrcode
-opencv-python
+opencv-python-headless
 pandas
 numpy
+deepface==0.0.93
+tensorflow==2.15.0
+keras==2.15.0
 ultralytics
 streamlit
 streamlit-option-menu
-streamlit-aggrid
 gTTS
 openpyxl
-tensorflow==2.15.0
-keras==2.15.0
-deepface==0.0.93
+qrcode
+
 
 
 

@@ -6,7 +6,6 @@
 # ========================
 import base64
 import math
-import pyttsx3
 import time
 import qrcode
 import smtplib
