@@ -1,0 +1,19 @@
+pyttsx
+qrcode
+opencv-python
+pandas
+numpy
+face-recognition
+ultralytics
+pyzbar
+streamlit
+streamlit-option-menu
+streamlit-aggrid
+gTTS
+openpyxl
+
+# Not necessary, so far Mac required
+# If got Torch issue with Unavailable FACE SCAN, then try these in terminal
+# pip install --upgrade ultralytics
+# rm -rf ~/.cache/torch_extensions
+# pip install --upgrade torch ultralytics
