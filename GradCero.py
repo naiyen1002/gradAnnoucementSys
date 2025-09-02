@@ -22,6 +22,9 @@ from streamlit_option_menu import option_menu
 from background import set_bg
 from gtts import gTTS
 from io import BytesIO
+from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, RTCConfiguration
+import av
+
 
 # ==============================================================================
 # macOS required only due to not self-located, comment section this on Windows
@@ -157,9 +160,38 @@ def generate_ind_qr(student_id, name, email):
     server.quit()
 
 # ========================
-# QR Code Scan
+# Camera Processor that access camera frame in Streamlit Cloud
 # ========================
 
+RTC_CONFIGURATION = RTCConfiguration(
+    {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"}]}  # Google STUN
+)
+
+class CameraProcessor(VideoProcessorBase):
+    def __init__(self):
+        self.frame = None
+
+    def recv(self, frame):
+        img = frame.to_ndarray(format="bgr24")
+        self.frame = img  # save latest frame
+        return av.VideoFrame.from_ndarray(img, format="bgr24")
+
+def get_camera_frame():
+    ctx = webrtc_streamer(
+        key="camera",
+        mode="sendrecv",
+        rtc_configuration=RTC_CONFIGURATION,
+        media_stream_constraints={"video": True, "audio": False},
+        video_processor_factory=CameraProcessor,
+    )
+    if ctx.video_processor:
+        return ctx.video_processor.frame
+    return None
+
+
+# ========================
+# QR Code Scan
+# ========================
 
 def scan_qr_and_get_student():
     df = pd.read_excel("studentdb.xlsx")
@@ -171,7 +203,7 @@ def scan_qr_and_get_student():
     student_id, name, course, image_path = None, None, None, None
 
     while True:
-        ret, frame = cap.read()
+        ret, frame = get_camera_frame()
         if not ret:
             break
 
@@ -241,7 +273,7 @@ def face_match_with_qr(proper_name, image_path):
     cap = cv.VideoCapture(0)
 
     while countdown > 0:
-        ret, frame = cap.read()
+        ret, frame = get_camera_frame()
         if not ret:
             break
         cv.putText(frame, f"Capturing in {countdown}s", (50, 70),
@@ -250,7 +282,7 @@ def face_match_with_qr(proper_name, image_path):
         time.sleep(1)
         countdown -= 1
 
-    ret, frame = cap.read()
+    ret, frame = get_camera_frame()
     if not ret:
         st.error("No camera detected or face not captured.")
         cap.release()

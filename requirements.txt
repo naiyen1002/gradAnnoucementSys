@@ -11,6 +11,10 @@ gTTS
 openpyxl
 face_recognition @ git+https://github.com/naiyen1002/face_recognition
 pyzbar @ git+https://github.com/naiyen1002/pyzbar.git
+opencv-python-headless
+streamlit-webrtc
+av
+
 
 # Not necessary, so far Mac required
 # If got Torch issue with Unavailable FACE SCAN, then try these in terminal
