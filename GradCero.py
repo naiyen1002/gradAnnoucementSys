@@ -163,12 +163,6 @@ def generate_ind_qr(student_id, name, email):
 # Camera Processor that access camera frame in Streamlit Cloud
 # ========================
 
-# ========================
-# WebRTC Camera Integration
-# ========================
-from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, RTCConfiguration
-import av
-
 RTC_CONFIGURATION = RTCConfiguration(
     {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
 )
@@ -182,22 +176,18 @@ class CameraProcessor(VideoProcessorBase):
         self.latest_frame = img
         return av.VideoFrame.from_ndarray(img, format="bgr24")
 
-# Create global context once
-ctx = webrtc_streamer(
-    key="camera",
-    mode="sendrecv",
-    rtc_configuration=RTC_CONFIGURATION,
-    media_stream_constraints={"video": True, "audio": False},
-    video_processor_factory=CameraProcessor,
-)
 
 def get_camera_frame():
-    """Return latest frame from WebRTC (or None if not ready)."""
+    ctx = webrtc_streamer(
+        key="camera",
+        mode="sendrecv",
+        rtc_configuration=RTC_CONFIGURATION,
+        media_stream_constraints={"video": True, "audio": False},
+        video_processor_factory=CameraProcessor,
+    )
     if ctx and ctx.video_processor and ctx.video_processor.latest_frame is not None:
         return ctx.video_processor.latest_frame.copy()
     return None
-
-
 # ========================
 # QR Code Scan
 # ========================
