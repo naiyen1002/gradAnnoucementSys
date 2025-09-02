@@ -204,10 +204,10 @@ def scan_qr_and_get_student():
     student_id, name, course, image_path = None, None, None, None
 
     while True:
-        ret, frame = get_camera_frame()
-        if not ret:
-            break
-
+        frame = get_camera_frame()
+        if frame is None:
+            continue  # no frame yet, wait for stream
+    
         decoded_objs = decode(frame)
         for obj in decoded_objs:
             qr_data = obj.data.decode('utf-8').strip()
@@ -274,8 +274,8 @@ def face_match_with_qr(proper_name, image_path):
     cap = cv.VideoCapture(0)
 
     while countdown > 0:
-        ret, frame = get_camera_frame()
-        if not ret:
+        frame = get_camera_frame()
+        if not frame:
             break
         cv.putText(frame, f"Capturing in {countdown}s", (50, 70),
                    cv.FONT_HERSHEY_SIMPLEX, 1.2, (255, 0, 127), 3)
@@ -283,7 +283,7 @@ def face_match_with_qr(proper_name, image_path):
         time.sleep(1)
         countdown -= 1
 
-    ret, frame = get_camera_frame()
+        frame = get_camera_frame()
     if not ret:
         st.error("No camera detected or face not captured.")
         cap.release()
