@@ -660,18 +660,18 @@ if menu == "Dashboard (Scan & Verification)":
                         st.session_state["cam_ctx"],     # <--- pass camera ctx here`
                     )
         st.session_state["face_verified"] = result
-                if st.session_state["face_verified"] is True:
-                    show_success_result(
-                        st.session_state["student_id"],
-                        st.session_state["name"],
-                        st.session_state["course"],
-                        st.session_state["image_path"]
-                    )
-                elif st.session_state["face_verified"] is False:
-                    show_failed_result()
-                else:
-                    st.session_state["face_verified"] = "no_face"
-                    show_noDetect_result()
+        if st.session_state["face_verified"] is True:
+            show_success_result(
+                st.session_state["student_id"],
+                st.session_state["name"],
+                st.session_state["course"],
+                st.session_state["image_path"]
+            )
+        elif st.session_state["face_verified"] is False:
+            show_failed_result()
+        else:
+            st.session_state["face_verified"] = "no_face"
+            show_noDetect_result()
 
 # ========================
 # QR Generator UI
