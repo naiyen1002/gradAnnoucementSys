@@ -163,8 +163,9 @@ def generate_ind_qr(student_id, name, email):
 # Camera Processor that access camera frame in Streamlit Cloud
 # ========================
 
+# Google STUN server to avoid ICE issues on cloud
 RTC_CONFIGURATION = RTCConfiguration(
-    {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"}]}  # Google STUN
+    {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
 )
 
 class CameraProcessor(VideoProcessorBase):
