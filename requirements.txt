@@ -1,5 +1,5 @@
 qrcode
-opencv-python @ git+https://github.com/naiyen1002/opencv-python.git
+opencv-python
 pandas
 numpy
 ultralytics
@@ -11,8 +11,8 @@ gTTS
 openpyxl
 face_recognition @ git+https://github.com/naiyen1002/face_recognition
 pyzbar @ git+https://github.com/naiyen1002/pyzbar.git
-opencv-python-headless
 streamlit-webrtc
+opencv-python-headless
 av
 
 

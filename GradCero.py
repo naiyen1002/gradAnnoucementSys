@@ -23,7 +23,12 @@ from background import set_bg
 from gtts import gTTS
 from io import BytesIO
 from streamlit_webrtc import webrtc_streamer
+from streamlit_webrtc import webrtc_streamer, WebRtcMode, VideoProcessorBase
 
+RTC_CONFIGURATION = {
+    "iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]
+    # If your campus network is strict, add a TURN server here.
+}
 # ==============================================================================
 # macOS required only due to not self-located, comment section this on Windows
 # ==============================================================================
@@ -160,154 +165,406 @@ def generate_ind_qr(student_id, name, email):
 # ========================
 # QR Code Scan
 # ========================
+import threading
 
-def scan_qr_and_get_student():
-    df = pd.read_excel("studentdb.xlsx")
+qr_lock = threading.Lock()  # avoid race when updating session_state from processor
 
-    cap = cv.VideoCapture(0)
-    st.info("Scanning for QR code...")
+class QRScanner(VideoProcessorBase):
+    def __init__(self):
+        self.det = cv.QRCodeDetector()
+        self.last_qr = None
 
-    st_frame = st.empty()
-    student_id, name, course, image_path = None, None, None, None
+    def recv(self, frame):
+        img = frame.to_ndarray(format="bgr24")
 
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
+        # Try multi first
+        ok, decoded_info, points, _ = self.det.detectAndDecodeMulti(img)
+        if not ok:
+            data, pts, _ = self.det.detectAndDecode(img)
+            decoded_info = [data] if data else []
+            points = [pts] if pts is not None and data else None
 
-        decoded_objs = decode(frame)
-        for obj in decoded_objs:
-            qr_data = obj.data.decode('utf-8').strip()
-            parts = qr_data.split('|')
-            if len(parts) < 2:
-                st.warning(f"QR code format invalid: '{qr_data}'")
+        # draw polygon(s)
+        if points is not None and len(points) > 0:
+            for pts in points:
+                if pts is None or len(pts) == 0: 
+                    continue
+                cv.polylines(img, [pts.astype(int)], True, (0, 255, 255), 2)
+
+        # handle found QR(s)
+        for data in decoded_info:
+            if not data:
                 continue
+            qr_data = data.strip()
+            if self.last_qr == qr_data:
+                break  # debounce same QR spam
+            self.last_qr = qr_data
 
-            student_id, name = parts[0].strip(), parts[1].strip()
-            match = df[(df['student_id'] == student_id) & (df['name'] == name)]
+            parts = qr_data.split("|")
+            if len(parts) >= 2:
+                student_id, name = parts[0].strip(), parts[1].strip()
 
-            if not match.empty:
-                course = match.iloc[0]['course']
-                image_path = match.iloc[0]['image_path']
+                try:
+                    df = pd.read_excel("studentdb.xlsx")
+                except Exception as e:
+                    cv.putText(img, f"DB error: {e}", (10, 30), cv.FONT_HERSHEY_SIMPLEX, 0.7, (0,0,255), 2)
+                    break
 
-                if not os.path.exists(image_path):
-                    st.error(f"Image file not found: {image_path}")
-                    return None, None, None, None
+                match = df[(df["student_id"] == student_id) & (df["name"] == name)]
+                if not match.empty:
+                    course = match.iloc[0]["course"]
+                    img_path = str(match.iloc[0]["image_path"])
+                    if os.path.exists(img_path):
+                        with open(img_path, "rb") as f:
+                            image_bytes = f.read()
+                        # Update session state to advance the flow
+                        with qr_lock:
+                            st.session_state["student_id"] = student_id
+                            st.session_state["name"] = name
+                            st.session_state["course"] = course
+                            st.session_state["image_path"] = image_bytes
+                            st.session_state["qr_found"] = True
+                    else:
+                        with qr_lock:
+                            st.session_state["qr_error"] = f"Image file not found: {img_path}"
+                else:
+                    with qr_lock:
+                        st.session_state["qr_error"] = "No match found in Excel."
 
-                with open(image_path, "rb") as f:
-                    image_path = f.read()
+        # HUD
+        msg = "Scanning for QR..." if not st.session_state.get("qr_found") else "QR found!"
+        cv.putText(img, msg, (10, 30), cv.FONT_HERSHEY_SIMPLEX, 0.8, (0,255,0), 2)
 
-                st.success("Match found in Excel.")
-                cap.release()
-                return student_id, name, course, image_path
-            else:
-                st.error("No match found in Excel.")
+        return av.VideoFrame.from_ndarray(img, format="bgr24")
+    
+    def start_qr_scanner_ui():
+        st.subheader("QR Code Scanner")
 
-        st_frame.image(frame, channels="BGR", caption="QR Scanner")
+        # reset transient flags
+        st.session_state.setdefault("qr_found", False)
+        st.session_state.setdefault("qr_error", None)
 
-    cap.release()
-    return None, None, None, None
+        ctx = webrtc_streamer(
+            key="qr-stream",
+            mode=WebRtcMode.SENDRECV,
+            media_stream_constraints={"video": True, "audio": False},
+            rtc_configuration=RTC_CONFIGURATION,
+            video_processor_factory=QRScanner,
+        )
+
+        # show any error messages coming from processor
+        if st.session_state.get("qr_error"):
+            st.error(st.session_state["qr_error"])
+            st.session_state["qr_error"] = None
+
+        # Inform once the processor has set the student fields
+        if st.session_state.get("qr_found"):
+            st.success(f"QR Found: {st.session_state['student_id']} • {st.session_state['name']}")
+
+# def scan_qr_and_get_student():
+#     df = pd.read_excel("studentdb.xlsx")
+
+#     cap = cv.VideoCapture(0)
+#     st.info("Scanning for QR code...")
+
+#     st_frame = st.empty()
+#     student_id, name, course, image_path = None, None, None, None
+
+#     while True:
+#         ret, frame = cap.read()
+#         if not ret:
+#             break
+
+#         decoded_objs = decode(frame)
+#         for obj in decoded_objs:
+#             qr_data = obj.data.decode('utf-8').strip()
+#             parts = qr_data.split('|')
+#             if len(parts) < 2:
+#                 st.warning(f"QR code format invalid: '{qr_data}'")
+#                 continue
+
+#             student_id, name = parts[0].strip(), parts[1].strip()
+#             match = df[(df['student_id'] == student_id) & (df['name'] == name)]
+
+#             if not match.empty:
+#                 course = match.iloc[0]['course']
+#                 image_path = match.iloc[0]['image_path']
+
+#                 if not os.path.exists(image_path):
+#                     st.error(f"Image file not found: {image_path}")
+#                     return None, None, None, None
+
+#                 with open(image_path, "rb") as f:
+#                     image_path = f.read()
+
+#                 st.success("Match found in Excel.")
+#                 cap.release()
+#                 return student_id, name, course, image_path
+#             else:
+#                 st.error("No match found in Excel.")
+
+#         st_frame.image(frame, channels="BGR", caption="QR Scanner")
+
+#     cap.release()
+#     return None, None, None, None
 
 
 # ========================
 # Face Recognition
 # ========================
+# ========================
+# Face Recognition (WebRTC)
+# ========================
+from collections import deque
 
-def face_match_with_qr(proper_name, image_path):
-    TOLERANCE = 0.50
+class FaceVerifier(VideoProcessorBase):
+    def __init__(self, proper_name: str, ref_image_bytes: bytes, tolerance: float = 0.50):
+        self.name = proper_name
+        self.tolerance = tolerance
+        self.status = "pending"  # "pending" | "match" | "nomatch" | "noface"
+        self.message = ""
+        self._dist_hist = deque(maxlen=5)
+        self._have_ref = False
 
-    def ui_conf(distance, thresh=TOLERANCE):
-        return 100.0 / (1.0 + math.exp(8 * (float(distance) - float(thresh))))
-
-    yolo_model = YOLO("yolov8n-face.pt")
-    # image_path is bytes from excel so need to convert back to np array
-    nparr = np.frombuffer(image_path, np.uint8)
-    # ref_image is now cv image
-    ref_image = cv.imdecode(nparr, cv.IMREAD_COLOR)
-    # Convert BGR to RGB
-    ref_rgb = cv.cvtColor(ref_image, cv.COLOR_BGR2RGB)
-    # Get face encodings
-    ref_encodings = face_recognition.face_encodings(ref_rgb)
-    if not ref_encodings:
-        st.error("No face found in reference image.")
-        return None
-
-    ref_encoding = ref_encodings[0]
-    matched = None
-    countdown = 3
-
-    st.info("Adjust your face... capturing in 3 seconds")
-    st_frame = st.empty()
-    cap = cv.VideoCapture(0)
-
-    while countdown > 0:
-        ret, frame = cap.read()
-        if not ret:
-            break
-        cv.putText(frame, f"Capturing in {countdown}s", (50, 70),
-                   cv.FONT_HERSHEY_SIMPLEX, 1.2, (255, 0, 127), 3)
-        st_frame.image(frame, channels="BGR", caption="Face Recognition")
-        time.sleep(1)
-        countdown -= 1
-
-    ret, frame = cap.read()
-    if not ret:
-        st.error("No camera detected or face not captured.")
-        cap.release()
-        st.stop()
-
-    raw_frame = frame.copy()
-    results = yolo_model(frame, verbose=False)
-    largest_area, best_box = 0, None
-
-    for r in results:
-        for box in r.boxes:
-            x1, y1, x2, y2 = box.xyxy[0].int().tolist()
-            area = (x2 - x1) * (y2 - y1)
-            if area > largest_area:
-                largest_area, best_box = area, (x1, y1, x2, y2)
-
-    if best_box:
-        x1, y1, x2, y2 = best_box
-        face_roi = raw_frame[y1:y2, x1:x2]
-        rgb_face = cv.cvtColor(face_roi, cv.COLOR_BGR2RGB)
-        encodings = face_recognition.face_encodings(rgb_face)
-        display_name, label_extra, color = "Unknown", "", (0, 0, 255)
-
-        if encodings:
-            face_distances = float(face_recognition.face_distance(
-                [ref_encoding], encodings[0])[0])
-            conf = ui_conf(face_distances, TOLERANCE)
-            is_match = face_distances <= TOLERANCE
-
-            if is_match:
-                display_name, color, matched = proper_name, (34, 139, 34), True
-                st.success(
-                    f"Face matched: {display_name} (dist = {face_distances:.3f} | conf ~ {conf:.0f}%)")
-                announce_name(display_name)
-                matched = True
+        # Precompute reference encoding
+        try:
+            nparr = np.frombuffer(ref_image_bytes, np.uint8)
+            ref_bgr = cv.imdecode(nparr, cv.IMREAD_COLOR)
+            ref_rgb = cv.cvtColor(ref_bgr, cv.COLOR_BGR2RGB)
+            encs = face_recognition.face_encodings(ref_rgb)
+            if encs:
+                self.ref_encoding = encs[0]
+                self._have_ref = True
             else:
-                st.error(
-                    f"Face does not match reference (dist = {face_distances:.3f} | conf ~ {conf:.0f}%)")
-                matched = False
+                self.status = "noface"
+                self.message = "No face found in reference image."
+        except Exception as e:
+            self.status = "noface"
+            self.message = f"Reference image error: {e}"
 
-            label_extra = f" | dist = {face_distances:.3f} | conf ~ {conf:.0f}%"
+        # (Optional) YOLO for bigger boxes; `face_recognition` already locates faces though.
+        self.yolo = YOLO("yolov8n-face.pt")
+
+    def _ui_conf(self, distance):
+        # same as your UI mapping
+        return 100.0 / (1.0 + math.exp(8 * (float(distance) - float(self.tolerance))))
+
+    def recv(self, frame):
+        img = frame.to_ndarray(format="bgr24")
+
+        if not self._have_ref:
+            cv.putText(img, "No reference face available", (10, 30), cv.FONT_HERSHEY_SIMPLEX, 0.8, (0,0,255), 2)
+            return av.VideoFrame.from_ndarray(img, format="bgr24")
+
+        # detect face ROI (YOLO → largest box)
+        results = self.yolo(img, verbose=False)
+        best = None
+        best_area = 0
+        for r in results:
+            for b in r.boxes:
+                x1, y1, x2, y2 = b.xyxy[0].int().tolist()
+                area = (x2 - x1) * (y2 - y1)
+                if area > best_area:
+                    best_area, best = area, (x1, y1, x2, y2)
+
+        if best is None:
+            # fallback: let face_recognition find face if YOLO misses
+            rgb = cv.cvtColor(img, cv.COLOR_BGR2RGB)
+            locs = face_recognition.face_locations(rgb, model="hog")
+            if locs:
+                t, r, b, l = max(locs, key=lambda t: (t[2]-t[0])*(t[1]-t[3]))
+                best = (l, t, r, b)
+
+        if best is None:
+            cv.putText(img, "No face detected. Adjust pose/lighting...", (10, 30), cv.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,255), 2)
+            # mark transient "noface" only if we never saw a face at all
+            if not self._dist_hist:
+                self.status = "noface"
+            return av.VideoFrame.from_ndarray(img, format="bgr24")
+
+        x1, y1, x2, y2 = best
+        face_roi = img[y1:y2, x1:x2]
+        rgb_face = cv.cvtColor(face_roi, cv.COLOR_BGR2RGB)
+        encs = face_recognition.face_encodings(rgb_face)
+
+        color = (0, 0, 255)
+        label = "Unknown"
+
+        if encs:
+            dist = float(face_recognition.face_distance([self.ref_encoding], encs[0])[0])
+            self._dist_hist.append(dist)
+            conf = self._ui_conf(dist)
+            is_match = dist <= self.tolerance
+            label = f"{self.name if is_match else 'Unknown'} | dist={dist:.3f} | conf~{conf:.0f}%"
+            color = (34, 139, 34) if is_match else (0, 0, 255)
+
+            # accept only when several consecutive frames are below threshold
+            if len(self._dist_hist) == self._dist_hist.maxlen and all(d <= self.tolerance for d in self._dist_hist):
+                self.status = "match"
+                self.message = f"MATCH ✅ {self.name} | median={np.median(self._dist_hist):.3f}"
+            elif len(self._dist_hist) == self._dist_hist.maxlen:
+                self.status = "nomatch"
+                self.message = f"NOT MATCH ❌ median={np.median(self._dist_hist):.3f}"
+
         else:
-            st.warning(
-                "No face encoding from camera frame. Try better lighting / frontal pose.")
-            matched = None
+            self.status = "noface"
+            label = "No encodings (pose/lighting?)"
 
-        cv.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-        cv.putText(frame, f"{display_name}{label_extra}", (x1, max(20, y1 - 10)),
-                   cv.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
-        st_frame.image(frame, channels="BGR", caption="Face Recognition")
-    else:
-        st.warning("No face detected. Please move closer and face the camera.")
-        st_frame.image(frame, channels="BGR", caption="Face Recognition")
-        matched = None
+        cv.rectangle(img, (x1, y1), (x2, y2), color, 2)
+        cv.putText(img, label, (x1, max(20, y1 - 10)), cv.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
 
-    cap.release()
-    return matched
+        return av.VideoFrame.from_ndarray(img, format="bgr24")
+
+
+def start_face_verify_ui():
+    st.subheader("Facial Recognition")
+
+    student_id = st.session_state.get("student_id")
+    name = st.session_state.get("name")
+    ref_bytes = st.session_state.get("image_path")
+
+    if not student_id or not ref_bytes:
+        st.info("Scan a valid QR first.")
+        return
+
+    # Allow threshold tweak
+    tol = st.slider("Face distance threshold (lower=stricter)", 0.30, 0.80, 0.50, 0.01)
+
+    def factory():
+        return FaceVerifier(name, ref_bytes, tolerance=tol)
+
+    ctx = webrtc_streamer(
+        key="face-stream",
+        mode=WebRtcMode.SENDRECV,
+        media_stream_constraints={"video": True, "audio": False},
+        rtc_configuration=RTC_CONFIGURATION,
+        video_processor_factory=factory,
+    )
+
+    # Read back status from the processor and trigger your dialogs
+    if ctx and ctx.video_processor:
+        status = ctx.video_processor.status
+        msg = ctx.video_processor.message
+
+        if status == "match":
+            st.success(msg or "Face matched.")
+            st.session_state["face_verified"] = True
+            # show your dialog & announce
+            announce_name(name)
+            show_success_result(
+                st.session_state["student_id"],
+                name,
+                st.session_state["course"],
+                ref_bytes
+            )
+
+        elif status == "nomatch":
+            st.error(msg or "Face not matched.")
+            st.session_state["face_verified"] = False
+            show_failed_result()
+
+        elif status == "noface":
+            # Only show dialog if we never had encodings yet and user expects a result
+            if st.session_state.get("face_verified") is None:
+                # st.warning("No face detected yet…")
+                # You also have a ‘no face’ dialog:
+                show_noDetect_result()
+
+# def face_match_with_qr(proper_name, image_path):
+#     TOLERANCE = 0.50
+
+#     def ui_conf(distance, thresh=TOLERANCE):
+#         return 100.0 / (1.0 + math.exp(8 * (float(distance) - float(thresh))))
+
+#     yolo_model = YOLO("yolov8n-face.pt")
+#     # image_path is bytes from excel so need to convert back to np array
+#     nparr = np.frombuffer(image_path, np.uint8)
+#     # ref_image is now cv image
+#     ref_image = cv.imdecode(nparr, cv.IMREAD_COLOR)
+#     # Convert BGR to RGB
+#     ref_rgb = cv.cvtColor(ref_image, cv.COLOR_BGR2RGB)
+#     # Get face encodings
+#     ref_encodings = face_recognition.face_encodings(ref_rgb)
+#     if not ref_encodings:
+#         st.error("No face found in reference image.")
+#         return None
+
+#     ref_encoding = ref_encodings[0]
+#     matched = None
+#     countdown = 3
+
+#     st.info("Adjust your face... capturing in 3 seconds")
+#     st_frame = st.empty()
+#     cap = cv.VideoCapture(0)
+
+#     while countdown > 0:
+#         ret, frame = cap.read()
+#         if not ret:
+#             break
+#         cv.putText(frame, f"Capturing in {countdown}s", (50, 70),
+#                    cv.FONT_HERSHEY_SIMPLEX, 1.2, (255, 0, 127), 3)
+#         st_frame.image(frame, channels="BGR", caption="Face Recognition")
+#         time.sleep(1)
+#         countdown -= 1
+
+#     ret, frame = cap.read()
+#     if not ret:
+#         st.error("No camera detected or face not captured.")
+#         cap.release()
+#         st.stop()
+
+#     raw_frame = frame.copy()
+#     results = yolo_model(frame, verbose=False)
+#     largest_area, best_box = 0, None
+
+#     for r in results:
+#         for box in r.boxes:
+#             x1, y1, x2, y2 = box.xyxy[0].int().tolist()
+#             area = (x2 - x1) * (y2 - y1)
+#             if area > largest_area:
+#                 largest_area, best_box = area, (x1, y1, x2, y2)
+
+#     if best_box:
+#         x1, y1, x2, y2 = best_box
+#         face_roi = raw_frame[y1:y2, x1:x2]
+#         rgb_face = cv.cvtColor(face_roi, cv.COLOR_BGR2RGB)
+#         encodings = face_recognition.face_encodings(rgb_face)
+#         display_name, label_extra, color = "Unknown", "", (0, 0, 255)
+
+#         if encodings:
+#             face_distances = float(face_recognition.face_distance(
+#                 [ref_encoding], encodings[0])[0])
+#             conf = ui_conf(face_distances, TOLERANCE)
+#             is_match = face_distances <= TOLERANCE
+
+#             if is_match:
+#                 display_name, color, matched = proper_name, (34, 139, 34), True
+#                 st.success(
+#                     f"Face matched: {display_name} (dist = {face_distances:.3f} | conf ~ {conf:.0f}%)")
+#                 announce_name(display_name)
+#                 matched = True
+#             else:
+#                 st.error(
+#                     f"Face does not match reference (dist = {face_distances:.3f} | conf ~ {conf:.0f}%)")
+#                 matched = False
+
+#             label_extra = f" | dist = {face_distances:.3f} | conf ~ {conf:.0f}%"
+#         else:
+#             st.warning(
+#                 "No face encoding from camera frame. Try better lighting / frontal pose.")
+#             matched = None
+
+#         cv.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+#         cv.putText(frame, f"{display_name}{label_extra}", (x1, max(20, y1 - 10)),
+#                    cv.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
+#         st_frame.image(frame, channels="BGR", caption="Face Recognition")
+#     else:
+#         st.warning("No face detected. Please move closer and face the camera.")
+#         st_frame.image(frame, channels="BGR", caption="Face Recognition")
+#         matched = None
+
+#     cap.release()
+#     return matched
 
 # ========================
 # Text to Speech
@@ -336,7 +593,6 @@ def announce_name(student_name):
 # ========================
 # Main UI
 # ========================
-
 
 st.set_page_config(page_title="Graduation Ceremony System",
                    page_icon="🎓", layout="wide")
@@ -545,41 +801,29 @@ def show_noDetect_result():
 # ================================================
 
 
+# ================================================
+# Dashboard (QR Scan + Face Recognition)
+# ================================================
 if menu == "Dashboard (Scan & Verification)":
-
     set_bg("bckground/graduation_bg.jpg")
 
     st.markdown(
         """
-        <h2 style='text-align: center; padding:0 0 30px 0;'>Scan & Verify Students</h1><hr style='margin:0 0 40px 0;'>""",
-        unsafe_allow_html=True
-    )
-
-    st.markdown(
-        """
-        <style>
-        div.stButton > button { 
-            display: block; 
-            margin: 0 auto; 
-            border: 1px solid #57ffe0 !important; 
-            color: #57ffe0 !important;
-        }
-        div.stButton > button:hover {
-            border: 1px solid #fae100 !important; 
-            color: #fae100 !important;
-        }
-        </style>
+        <h2 style='text-align: center; padding:0 0 30px 0;'>Scan & Verify Students</h1>
+        <hr style='margin:0 0 40px 0;'>
         """,
         unsafe_allow_html=True
     )
 
     col1, col2 = st.columns(2)
 
-    # Session state, avoid redundant result for different person
+    # Session defaults
     st.session_state.setdefault("scanning_started", False)
     st.session_state.setdefault("student_id", None)
+    st.session_state.setdefault("name", None)
+    st.session_state.setdefault("course", None)
+    st.session_state.setdefault("image_path", None)
     st.session_state.setdefault("face_verified", None)
-    st.session_state.setdefault("show_result", False)
 
     with col1:
         header_col, btn_col = st.columns([3, 1])
@@ -588,58 +832,34 @@ if menu == "Dashboard (Scan & Verification)":
 
         def start_scanning():
             st.session_state["scanning_started"] = True
+            st.session_state["qr_found"] = False
+            st.session_state["qr_error"] = None
             st.session_state["student_id"] = None
+            st.session_state["name"] = None
+            st.session_state["course"] = None
+            st.session_state["image_path"] = None
             st.session_state["face_verified"] = None
-            st.session_state["show_result"] = False
 
         def stop_scanning():
             st.session_state["scanning_started"] = False
-            st.session_state["student_id"] = None
-            st.session_state["face_verified"] = None
-            st.session_state["show_result"] = False
 
         with btn_col:
             if st.session_state["scanning_started"]:
-                st.button("Stop Scanning", key="stop-btn",
-                          on_click=stop_scanning)
+                st.button("Stop", key="stop-btn", on_click=stop_scanning)
             else:
-                st.button("Start Scanning", key="start-btn",
-                          on_click=start_scanning)
+                st.button("Start", key="start-btn", on_click=start_scanning)
 
-        if st.session_state["scanning_started"] and st.session_state.get("student_id") is None:
-            student_id, name, course, image_path = scan_qr_and_get_student()
-            if student_id:
-                st.session_state["student_id"] = student_id
-                st.session_state["name"] = name
-                st.session_state["course"] = course
-                st.session_state["image_path"] = image_path
-                st.success("QR Found!")
+        if st.session_state["scanning_started"] and not st.session_state.get("student_id"):
+            start_qr_scanner_ui()
+        elif st.session_state.get("student_id"):
+            st.success(f"Ready for face verify: {st.session_state['student_id']} • {st.session_state['name']}")
 
     with col2:
         st.subheader("Facial Recognition")
-
-        with st.container() as face_scan_container:
-            if st.session_state["student_id"]:
-
-                if st.session_state["face_verified"] is None:
-                    result = face_match_with_qr(
-                        st.session_state["name"],
-                        st.session_state["image_path"]
-                    )
-                    st.session_state["face_verified"] = result
-
-                if st.session_state["face_verified"] is True:
-                    show_success_result(
-                        st.session_state["student_id"],
-                        st.session_state["name"],
-                        st.session_state["course"],
-                        st.session_state["image_path"]
-                    )
-                elif st.session_state["face_verified"] is False:
-                    show_failed_result()
-                else:
-                    st.session_state["face_verified"] = "no_face"
-                    show_noDetect_result()
+        if st.session_state.get("student_id"):
+            start_face_verify_ui()
+        else:
+            st.info("Please scan a QR first.")
 
 # ========================
 # QR Generator UI
