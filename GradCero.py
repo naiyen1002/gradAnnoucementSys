@@ -164,7 +164,8 @@ def generate_ind_qr(student_id, name, email):
 def scan_qr_and_get_student():
     df = pd.read_excel("studentdb.xlsx")
 
-    cap = cv.VideoCapture(0)
+    # cap = cv.VideoCapture(0)
+    cap = st.camera_input("camera", key="camera")
     st.info("Scanning for QR code...")
 
     st_frame = st.empty()
