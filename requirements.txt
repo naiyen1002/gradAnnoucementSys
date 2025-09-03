@@ -1,5 +1,5 @@
 qrcode
-opencv-python
+opencv-python @ git+https://github.com/naiyen1002/opencv-python.git
 pandas
 numpy
 ultralytics
