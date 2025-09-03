@@ -176,8 +176,7 @@ class QRScanner(VideoProcessorBase):
     def __init__(self):
         self.det = cv.QRCodeDetector()
         self.last_accept_time = 0.0
-        # require several consecutive identical decodes
-        self._buf = deque(maxlen=7)
+        self._buf = deque(maxlen=7)  # require several consecutive identical decodes
         self._last_candidates = []
         self.MIN_AREA_FRAC = 0.012  # ~1.2% of frame area
         self.COOLDOWN_SEC = 1.0     # ignore new hits briefly after accept
@@ -254,8 +253,7 @@ class QRScanner(VideoProcessorBase):
                 sid, name = [p.strip() for p in qr_data.split("|", 1)]
                 try:
                     df = pd.read_excel("studentdb.xlsx")
-                    match = df[(df["student_id"] == sid)
-                               & (df["name"] == name)]
+                    match = df[(df["student_id"] == sid) & (df["name"] == name)]
                     if not match.empty:
                         course = match.iloc[0]["course"]
                         img_path = str(match.iloc[0]["image_path"])
@@ -278,11 +276,51 @@ class QRScanner(VideoProcessorBase):
                 # Clear buffer after a decision
                 self._buf.clear()
 
-        msg = "Scanning for QR..." if not st.session_state.get(
-            "qr_found") else "QR found!"
-        cv.putText(img, msg, (10, 30), cv.FONT_HERSHEY_SIMPLEX,
-                   0.8, (0, 255, 0), 2)
+        msg = "Scanning for QR..." if not st.session_state.get("qr_found") else "QR found!"
+        cv.putText(img, msg, (10, 30), cv.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
         return av.VideoFrame.from_ndarray(img, format="bgr24")
+
+
+def start_qr_scanner_ui():
+    # Initialize session state variables with appropriate defaults
+    st.session_state.setdefault("qr_found", False)
+    st.session_state.setdefault("qr_error", None)
+    st.session_state.setdefault("qr_seen_once", False)
+
+    # Use a container to manage the UI elements that should be hidden/shown
+    ui_container = st.container()
+
+    if not st.session_state.get("qr_found"):
+        with ui_container:
+            ctx = webrtc_streamer(
+                key="qr-stream",
+                mode=WebRtcMode.SENDRECV,
+                media_stream_constraints={"video": True, "audio": False},
+                rtc_configuration=RTC_CONFIGURATION,
+                video_processor_factory=QRScanner,
+            )
+
+            # Poll only when the stream is active
+            if ctx.state.playing:
+                st_autorefresh(interval=500, key="qr_watch")
+
+            if st.session_state.get("qr_error"):
+                st.error(st.session_state["qr_error"])
+                st.session_state["qr_error"] = None
+
+    # This block now runs only when a QR has been successfully processed
+    if st.session_state.get("qr_found") and not st.session_state["qr_seen_once"]:
+        st.session_state["qr_seen_once"] = True
+        st.success(
+            f"QR Found: {st.session_state['student_id']} • {st.session_state['name']}")
+
+        # Stop the stream and force a rerun to clean up the UI
+        # The stream will be stopped naturally as the `if` block is now false
+        if "qr-stream" in st.session_state:
+            # This will stop the stream on the next run
+            del st.session_state["qr-stream"]
+
+        st.experimental_rerun()
 
 # def scan_qr_and_get_student():
 #     df = pd.read_excel("studentdb.xlsx")
