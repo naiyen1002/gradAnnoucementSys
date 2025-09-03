@@ -238,8 +238,6 @@ class QRScanner(VideoProcessorBase):
 
 
 def start_qr_scanner_ui():
-    st.subheader("QR Code Scanner")
-
     # reset transient flags
     st.session_state.setdefault("qr_found", False)
     st.session_state.setdefault("qr_error", None)
@@ -809,8 +807,7 @@ if menu == "Dashboard (Scan & Verification)":
 
     st.markdown(
         """
-        <h2 style='text-align: center; padding:0 0 30px 0;'>Scan & Verify Students</h1>
-        <hr style='margin:0 0 40px 0;'>
+        <style> div.stButton > button { display: block; margin: 0 auto; border: 1px solid #57ffe0 !important; color: #57ffe0 !important; } div.stButton > button:hover { border: 1px solid #fae100 !important; color: #fae100 !important; } </style>
         """,
         unsafe_allow_html=True
     )
