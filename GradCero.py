@@ -25,6 +25,7 @@ from io import BytesIO
 from streamlit_webrtc import webrtc_streamer, WebRtcMode, VideoProcessorBase
 import threading
 import av
+from streamlit_autorefresh import st_autorefresh
 
 RTC_CONFIGURATION = {
     "iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]
@@ -238,9 +239,11 @@ class QRScanner(VideoProcessorBase):
 
 
 def start_qr_scanner_ui():
-    # reset transient flags
+    st.subheader("QR Code Scanner")
+
     st.session_state.setdefault("qr_found", False)
     st.session_state.setdefault("qr_error", None)
+    st.session_state.setdefault("qr_seen_once", False)  # debouncer
 
     ctx = webrtc_streamer(
         key="qr-stream",
@@ -250,14 +253,22 @@ def start_qr_scanner_ui():
         video_processor_factory=QRScanner,
     )
 
-    # show any error messages coming from processor
+    # 🔁 Poll every 500ms so UI notices updates from the video thread
+    st_autorefresh(interval=500, key="qr_watch")
+
     if st.session_state.get("qr_error"):
         st.error(st.session_state["qr_error"])
         st.session_state["qr_error"] = None
 
-    # Inform once the processor has set the student fields
-    if st.session_state.get("qr_found"):
+    # When QR is found the processor already filled: student_id, name, course, image_path
+    if st.session_state.get("qr_found") and not st.session_state["qr_seen_once"]:
+        st.session_state["qr_seen_once"] = True   # prevent repeated toasts
         st.success(f"QR Found: {st.session_state['student_id']} • {st.session_state['name']}")
+        # Optional: stop the QR stream to free camera before face verify
+        if ctx and ctx.state.playing:
+            ctx.stop()
+        # Force a one-time rerun to progress immediately
+        st.rerun()
 
 # def scan_qr_and_get_student():
 #     df = pd.read_excel("studentdb.xlsx")
@@ -309,9 +320,6 @@ def start_qr_scanner_ui():
 
 # ========================
 # Face Recognition
-# ========================
-# ========================
-# Face Recognition (WebRTC)
 # ========================
 from collections import deque
 
@@ -797,11 +805,6 @@ def show_noDetect_result():
 # ================================================
 # Dashboard (QR Scan + Face Recognition)
 # ================================================
-
-
-# ================================================
-# Dashboard (QR Scan + Face Recognition)
-# ================================================
 if menu == "Dashboard (Scan & Verification)":
     set_bg("bckground/graduation_bg.jpg")
 
@@ -880,9 +883,11 @@ elif menu == "QR Generator":
     st.markdown(
         """
         <style>
-        div.stButton > button { 
-            display: block; 
-            margin: 0 auto; 
+        div.stButton {
+            display: flex;
+            justify-content: center;
+        }
+        div.stButton > button {
             border: 1px solid #57ffe0 !important; 
             color: #57ffe0 !important;
         }
@@ -891,8 +896,13 @@ elif menu == "QR Generator":
             color: #fae100 !important;
         }
 
-        div[data-testid="stSpinner"] > div { display: flex; justify-content: center; }
-        div[data-testid="stSpinner"] > div > div { text-align: center; }
+        div[data-testid="stSpinner"] > div { 
+            display: flex; 
+            justify-content: center; 
+        }
+        div[data-testid="stSpinner"] > div > div { 
+            text-align: center; 
+        }
         </style>
         """,
         unsafe_allow_html=True
@@ -1003,16 +1013,20 @@ elif menu == "Admin View":
         st.markdown(
             """
             <style>
-                .stButton > button {
+                div.stButton {
+                    display: block;
+                    width: 100% !important;
+                }
+                div.stButton > button {
                     background-color: #57ffe0 !important;
                     color: black !important;
                     border: none;
                     border-radius: 5px;
                     padding: 5px 5px;
                     font-weight: bold;
-                    width: 100%;
+                    width: 100% !important;
                 }
-                .stButton > button:hover {
+                div.stButton > button:hover {
                     background-color: #fae100 !important;
                     color: black !important;
                 }
