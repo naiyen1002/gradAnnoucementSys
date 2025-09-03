@@ -239,8 +239,6 @@ class QRScanner(VideoProcessorBase):
 
 
 def start_qr_scanner_ui():
-    st.subheader("QR Code Scanner")
-
     st.session_state.setdefault("qr_found", False)
     st.session_state.setdefault("qr_error", None)
     st.session_state.setdefault("qr_seen_once", False)  # debouncer
@@ -600,18 +598,73 @@ def announce_name(student_name):
 # Main UI
 # ========================
 
-st.set_page_config(page_title="Graduation Ceremony System",
-                   page_icon="🎓", layout="wide")
+Main UI
 
+st.set_page_config(
+    page_title="Graduation Ceremony System",
+    page_icon="🎓",
+    layout="wide",
+    initial_sidebar_state="collapsed"
+)
+
+# Sidebar Navigation
 with st.sidebar:
-    menu = option_menu(
-        menu_title=None,
-        options=["Dashboard (Scan & Verification)",
-                 "QR Generator", "Admin View"],
-        icons=["house", "qr-code", "people-fill"],
-        default_index=0
+    st.markdown(
+        """
+        <div style="
+            background-color:#686868;
+            color:white;
+            font-weight:bold;
+            padding:20px;
+            border-radius:8px 8px 0 0;
+            text-align:center;
+            font-size:20px;
+        ">
+            System's Menu
+            <div style="
+                border-bottom:2px solid #444;
+                width:100%; 
+                margin:20px auto -10px auto;
+            "></div>
+        </div>
+        """,
+        unsafe_allow_html=True
     )
-
+    
+    menu = option_menu(
+        menu_title=None, 
+        options=["Dashboard (Scan & Verification)", "QR Generator", "Admin View"],
+        icons=["house", "qr-code", "people-fill"], 
+        menu_icon="cast", 
+        default_index=0, 
+        styles={
+            # Options
+            "container": {
+                "padding": "5px",
+                "background-color": "#686868",
+                "border-radius": "0 0 8px 8px",
+            },
+            "icon": {
+                "color": "#E0E0E0",
+                "font-size": "20px"
+            },
+            # Menu items
+            "nav-link": {
+                "font-size": "16px",
+                "text-align": "left",
+                "margin": "5px 0",
+                "padding": "10px 20px",
+                "border-radius": "8px",
+                "color": "#BCC3C7",
+                "font-weight": "bold",
+            },
+            # Active menu items
+            "nav-link-selected": {
+                "background-color": "#2C2C2C",
+                "color": "white", 
+            },
+        }
+    )
 # =================================================
 # Successful Result Pop Up After Facial Recognition
 # =================================================
