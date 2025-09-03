@@ -4,6 +4,7 @@
 # ========================
 # Importing Fields
 # ========================
+from collections import deque
 import base64
 import math
 import time
@@ -164,10 +165,12 @@ def generate_ind_qr(student_id, name, email):
 
     server.quit()
 
+
 # ========================
 # QR Code Scan
 # ========================
 qr_lock = threading.Lock()  # avoid race when updating session_state from processor
+
 
 class QRScanner(VideoProcessorBase):
     def __init__(self):
@@ -187,7 +190,7 @@ class QRScanner(VideoProcessorBase):
         # draw polygon(s)
         if points is not None and len(points) > 0:
             for pts in points:
-                if pts is None or len(pts) == 0: 
+                if pts is None or len(pts) == 0:
                     continue
                 cv.polylines(img, [pts.astype(int)], True, (0, 255, 255), 2)
 
@@ -207,10 +210,12 @@ class QRScanner(VideoProcessorBase):
                 try:
                     df = pd.read_excel("studentdb.xlsx")
                 except Exception as e:
-                    cv.putText(img, f"DB error: {e}", (10, 30), cv.FONT_HERSHEY_SIMPLEX, 0.7, (0,0,255), 2)
+                    cv.putText(
+                        img, f"DB error: {e}", (10, 30), cv.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
                     break
 
-                match = df[(df["student_id"] == student_id) & (df["name"] == name)]
+                match = df[(df["student_id"] == student_id)
+                           & (df["name"] == name)]
                 if not match.empty:
                     course = match.iloc[0]["course"]
                     img_path = str(match.iloc[0]["image_path"])
@@ -232,41 +237,54 @@ class QRScanner(VideoProcessorBase):
                         st.session_state["qr_error"] = "No match found in Excel."
 
         # HUD
-        msg = "Scanning for QR..." if not st.session_state.get("qr_found") else "QR found!"
-        cv.putText(img, msg, (10, 30), cv.FONT_HERSHEY_SIMPLEX, 0.8, (0,255,0), 2)
+        msg = "Scanning for QR..." if not st.session_state.get(
+            "qr_found") else "QR found!"
+        cv.putText(img, msg, (10, 30), cv.FONT_HERSHEY_SIMPLEX,
+                   0.8, (0, 255, 0), 2)
 
         return av.VideoFrame.from_ndarray(img, format="bgr24")
 
 
 def start_qr_scanner_ui():
+    # Initialize session state variables with appropriate defaults
     st.session_state.setdefault("qr_found", False)
     st.session_state.setdefault("qr_error", None)
-    st.session_state.setdefault("qr_seen_once", False)  # debouncer
+    st.session_state.setdefault("qr_seen_once", False)
 
-    ctx = webrtc_streamer(
-        key="qr-stream",
-        mode=WebRtcMode.SENDRECV,
-        media_stream_constraints={"video": True, "audio": False},
-        rtc_configuration=RTC_CONFIGURATION,
-        video_processor_factory=QRScanner,
-    )
+    # Use a container to manage the UI elements that should be hidden/shown
+    ui_container = st.container()
 
-    # 🔁 Poll every 500ms so UI notices updates from the video thread
-    st_autorefresh(interval=500, key="qr_watch")
+    if not st.session_state.get("qr_found"):
+        with ui_container:
+            ctx = webrtc_streamer(
+                key="qr-stream",
+                mode=WebRtcMode.SENDRECV,
+                media_stream_constraints={"video": True, "audio": False},
+                rtc_configuration=RTC_CONFIGURATION,
+                video_processor_factory=QRScanner,
+            )
 
-    if st.session_state.get("qr_error"):
-        st.error(st.session_state["qr_error"])
-        st.session_state["qr_error"] = None
+            # Poll only when the stream is active
+            if ctx.state.playing:
+                st_autorefresh(interval=500, key="qr_watch")
 
-    # When QR is found the processor already filled: student_id, name, course, image_path
+            if st.session_state.get("qr_error"):
+                st.error(st.session_state["qr_error"])
+                st.session_state["qr_error"] = None
+
+    # This block now runs only when a QR has been successfully processed
     if st.session_state.get("qr_found") and not st.session_state["qr_seen_once"]:
-        st.session_state["qr_seen_once"] = True   # prevent repeated toasts
-        st.success(f"QR Found: {st.session_state['student_id']} • {st.session_state['name']}")
-        # Optional: stop the QR stream to free camera before face verify
-        if ctx and ctx.state.playing:
-            ctx.stop()
-        # Force a one-time rerun to progress immediately
-        st.rerun()
+        st.session_state["qr_seen_once"] = True
+        st.success(
+            f"QR Found: {st.session_state['student_id']} • {st.session_state['name']}")
+
+        # Stop the stream and force a rerun to clean up the UI
+        # The stream will be stopped naturally as the `if` block is now false
+        if "qr-stream" in st.session_state:
+            # This will stop the stream on the next run
+            del st.session_state["qr-stream"]
+
+        st.experimental_rerun()
 
 # def scan_qr_and_get_student():
 #     df = pd.read_excel("studentdb.xlsx")
@@ -319,7 +337,7 @@ def start_qr_scanner_ui():
 # ========================
 # Face Recognition
 # ========================
-from collections import deque
+
 
 class FaceVerifier(VideoProcessorBase):
     def __init__(self, proper_name: str, ref_image_bytes: bytes, tolerance: float = 0.50):
@@ -357,7 +375,8 @@ class FaceVerifier(VideoProcessorBase):
         img = frame.to_ndarray(format="bgr24")
 
         if not self._have_ref:
-            cv.putText(img, "No reference face available", (10, 30), cv.FONT_HERSHEY_SIMPLEX, 0.8, (0,0,255), 2)
+            cv.putText(img, "No reference face available", (10, 30),
+                       cv.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
             return av.VideoFrame.from_ndarray(img, format="bgr24")
 
         # detect face ROI (YOLO → largest box)
@@ -380,7 +399,8 @@ class FaceVerifier(VideoProcessorBase):
                 best = (l, t, r, b)
 
         if best is None:
-            cv.putText(img, "No face detected. Adjust pose/lighting...", (10, 30), cv.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,255), 2)
+            cv.putText(img, "No face detected. Adjust pose/lighting...",
+                       (10, 30), cv.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
             # mark transient "noface" only if we never saw a face at all
             if not self._dist_hist:
                 self.status = "noface"
@@ -395,7 +415,8 @@ class FaceVerifier(VideoProcessorBase):
         label = "Unknown"
 
         if encs:
-            dist = float(face_recognition.face_distance([self.ref_encoding], encs[0])[0])
+            dist = float(face_recognition.face_distance(
+                [self.ref_encoding], encs[0])[0])
             self._dist_hist.append(dist)
             conf = self._ui_conf(dist)
             is_match = dist <= self.tolerance
@@ -415,7 +436,8 @@ class FaceVerifier(VideoProcessorBase):
             label = "No encodings (pose/lighting?)"
 
         cv.rectangle(img, (x1, y1), (x2, y2), color, 2)
-        cv.putText(img, label, (x1, max(20, y1 - 10)), cv.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+        cv.putText(img, label, (x1, max(20, y1 - 10)),
+                   cv.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
 
         return av.VideoFrame.from_ndarray(img, format="bgr24")
 
@@ -432,7 +454,8 @@ def start_face_verify_ui():
         return
 
     # Allow threshold tweak
-    tol = st.slider("Face distance threshold (lower=stricter)", 0.30, 0.80, 0.50, 0.01)
+    tol = st.slider("Face distance threshold (lower=stricter)",
+                    0.30, 0.80, 0.50, 0.01)
 
     def factory():
         return FaceVerifier(name, ref_bytes, tolerance=tol)
@@ -598,6 +621,7 @@ def announce_name(student_name):
 # Main UI
 # ========================
 
+
 st.set_page_config(
     page_title="Graduation Ceremony System",
     page_icon="🎓",
@@ -628,13 +652,14 @@ with st.sidebar:
         """,
         unsafe_allow_html=True
     )
-    
+
     menu = option_menu(
-        menu_title=None, 
-        options=["Dashboard (Scan & Verification)", "QR Generator", "Admin View"],
-        icons=["house", "qr-code", "people-fill"], 
-        menu_icon="cast", 
-        default_index=0, 
+        menu_title=None,
+        options=["Dashboard (Scan & Verification)",
+                 "QR Generator", "Admin View"],
+        icons=["house", "qr-code", "people-fill"],
+        menu_icon="cast",
+        default_index=0,
         styles={
             # Options
             "container": {
@@ -659,7 +684,7 @@ with st.sidebar:
             # Active menu items
             "nav-link-selected": {
                 "background-color": "#2C2C2C",
-                "color": "white", 
+                "color": "white",
             },
         }
     )
@@ -853,6 +878,7 @@ def show_noDetect_result():
         st.session_state["show_result"] = False
         st.rerun()
 
+
 # ================================================
 # Dashboard (QR Scan + Face Recognition)
 # ================================================
@@ -896,14 +922,17 @@ if menu == "Dashboard (Scan & Verification)":
 
         with btn_col:
             if st.session_state["scanning_started"]:
-                st.button("Stop Recording", key="stop-btn", on_click=stop_scanning)
+                st.button("Stop Recording", key="stop-btn",
+                          on_click=stop_scanning)
             else:
-                st.button("Start Recording", key="start-btn", on_click=start_scanning)
+                st.button("Start Recording", key="start-btn",
+                          on_click=start_scanning)
 
         if st.session_state["scanning_started"] and not st.session_state.get("student_id"):
             start_qr_scanner_ui()
         elif st.session_state.get("student_id"):
-            st.success(f"Ready for face verify: {st.session_state['student_id']} • {st.session_state['name']}")
+            st.success(
+                f"Ready for face verify: {st.session_state['student_id']} • {st.session_state['name']}")
 
     with col2:
         st.subheader("Facial Recognition")
