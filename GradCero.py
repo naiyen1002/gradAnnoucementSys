@@ -22,8 +22,9 @@ from streamlit_option_menu import option_menu
 from background import set_bg
 from gtts import gTTS
 from io import BytesIO
-from streamlit_webrtc import webrtc_streamer
 from streamlit_webrtc import webrtc_streamer, WebRtcMode, VideoProcessorBase
+import threading
+import av
 
 RTC_CONFIGURATION = {
     "iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]
@@ -165,11 +166,6 @@ def generate_ind_qr(student_id, name, email):
 # ========================
 # QR Code Scan
 # ========================
-# ========================
-# QR Code Scan (WebRTC)
-# ========================
-import threading
-
 qr_lock = threading.Lock()  # avoid race when updating session_state from processor
 
 class QRScanner(VideoProcessorBase):
