@@ -246,46 +246,35 @@ class QRScanner(VideoProcessorBase):
 
 
 def start_qr_scanner_ui():
-    # Initialize session state variables with appropriate defaults
     st.session_state.setdefault("qr_found", False)
     st.session_state.setdefault("qr_error", None)
-    st.session_state.setdefault("qr_seen_once", False)
+    st.session_state.setdefault("qr_seen_once", False)  # debouncer
 
-    # Use a container to manage the UI elements that should be hidden/shown
-    ui_container = st.container()
+    ctx = webrtc_streamer(
+        key="qr-stream",
+        mode=WebRtcMode.SENDRECV,
+        media_stream_constraints={"video": True, "audio": False},
+        rtc_configuration=RTC_CONFIGURATION,
+        video_processor_factory=QRScanner,
+    )
 
-    if not st.session_state.get("qr_found"):
-        with ui_container:
-            ctx = webrtc_streamer(
-                key="qr-stream",
-                mode=WebRtcMode.SENDRECV,
-                media_stream_constraints={"video": True, "audio": False},
-                rtc_configuration=RTC_CONFIGURATION,
-                video_processor_factory=QRScanner,
-            )
+    # 🔁 Poll every 500ms so UI notices updates from the video thread
+    st_autorefresh(interval=500, key="qr_watch")
 
-            # Poll only when the stream is active
-            if ctx.state.playing:
-                st_autorefresh(interval=500, key="qr_watch")
+    if st.session_state.get("qr_error"):
+        st.error(st.session_state["qr_error"])
+        st.session_state["qr_error"] = None
 
-            if st.session_state.get("qr_error"):
-                st.error(st.session_state["qr_error"])
-                st.session_state["qr_error"] = None
-
-    # This block now runs only when a QR has been successfully processed
+    # When QR is found the processor already filled: student_id, name, course, image_path
     if st.session_state.get("qr_found") and not st.session_state["qr_seen_once"]:
-        st.session_state["qr_seen_once"] = True
+        st.session_state["qr_seen_once"] = True   # prevent repeated toasts
         st.success(
             f"QR Found: {st.session_state['student_id']} • {st.session_state['name']}")
-
-        # Stop the stream and force a rerun to clean up the UI
-        # The stream will be stopped naturally as the `if` block is now false
-        if "qr-stream" in st.session_state:
-            # This will stop the stream on the next run
-            del st.session_state["qr-stream"]
-
-        st.experimental_rerun()
-
+        # Optional: stop the QR stream to free camera before face verify
+        if ctx and ctx.state.playing:
+            ctx.stop()
+        # Force a one-time rerun to progress immediately
+        st.rerun()
 # def scan_qr_and_get_student():
 #     df = pd.read_excel("studentdb.xlsx")
 
