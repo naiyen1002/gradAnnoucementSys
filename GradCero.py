@@ -165,6 +165,9 @@ def generate_ind_qr(student_id, name, email):
 # ========================
 # QR Code Scan
 # ========================
+# ========================
+# QR Code Scan (WebRTC)
+# ========================
 import threading
 
 qr_lock = threading.Lock()  # avoid race when updating session_state from processor
@@ -236,30 +239,31 @@ class QRScanner(VideoProcessorBase):
         cv.putText(img, msg, (10, 30), cv.FONT_HERSHEY_SIMPLEX, 0.8, (0,255,0), 2)
 
         return av.VideoFrame.from_ndarray(img, format="bgr24")
-    
-    def start_qr_scanner_ui():
-        st.subheader("QR Code Scanner")
 
-        # reset transient flags
-        st.session_state.setdefault("qr_found", False)
-        st.session_state.setdefault("qr_error", None)
 
-        ctx = webrtc_streamer(
-            key="qr-stream",
-            mode=WebRtcMode.SENDRECV,
-            media_stream_constraints={"video": True, "audio": False},
-            rtc_configuration=RTC_CONFIGURATION,
-            video_processor_factory=QRScanner,
-        )
+def start_qr_scanner_ui():
+    st.subheader("QR Code Scanner")
 
-        # show any error messages coming from processor
-        if st.session_state.get("qr_error"):
-            st.error(st.session_state["qr_error"])
-            st.session_state["qr_error"] = None
+    # reset transient flags
+    st.session_state.setdefault("qr_found", False)
+    st.session_state.setdefault("qr_error", None)
 
-        # Inform once the processor has set the student fields
-        if st.session_state.get("qr_found"):
-            st.success(f"QR Found: {st.session_state['student_id']} • {st.session_state['name']}")
+    ctx = webrtc_streamer(
+        key="qr-stream",
+        mode=WebRtcMode.SENDRECV,
+        media_stream_constraints={"video": True, "audio": False},
+        rtc_configuration=RTC_CONFIGURATION,
+        video_processor_factory=QRScanner,
+    )
+
+    # show any error messages coming from processor
+    if st.session_state.get("qr_error"):
+        st.error(st.session_state["qr_error"])
+        st.session_state["qr_error"] = None
+
+    # Inform once the processor has set the student fields
+    if st.session_state.get("qr_found"):
+        st.success(f"QR Found: {st.session_state['student_id']} • {st.session_state['name']}")
 
 # def scan_qr_and_get_student():
 #     df = pd.read_excel("studentdb.xlsx")
@@ -845,9 +849,9 @@ if menu == "Dashboard (Scan & Verification)":
 
         with btn_col:
             if st.session_state["scanning_started"]:
-                st.button("Stop", key="stop-btn", on_click=stop_scanning)
+                st.button("Stop Recording", key="stop-btn", on_click=stop_scanning)
             else:
-                st.button("Start", key="start-btn", on_click=start_scanning)
+                st.button("Start Recording", key="start-btn", on_click=start_scanning)
 
         if st.session_state["scanning_started"] and not st.session_state.get("student_id"):
             start_qr_scanner_ui()
