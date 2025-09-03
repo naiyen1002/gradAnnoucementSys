@@ -175,109 +175,73 @@ qr_lock = threading.Lock()  # avoid race when updating session_state from proces
 class QRScanner(VideoProcessorBase):
     def __init__(self):
         self.det = cv.QRCodeDetector()
-        self.last_accept_time = 0.0
-        self._buf = deque(maxlen=7)  # require several consecutive identical decodes
-        self._last_candidates = []
-        self.MIN_AREA_FRAC = 0.012  # ~1.2% of frame area
-        self.COOLDOWN_SEC = 1.0     # ignore new hits briefly after accept
-
-    @staticmethod
-    def _valid_payload(s: str) -> bool:
-        # Accept only "student_id|name" style (ID numeric with 5+ digits; tweak if needed)
-        if not s or "|" not in s:
-            return False
-        sid, name = [p.strip() for p in s.split("|", 1)]
-        return sid.isdigit() and len(sid) >= 5 and len(name) >= 2
-
-    def _accept_if_stable(self, now: float):
-        if len(self._buf) < self._buf.maxlen:
-            return False
-        # all readings in buffer must match
-        val = self._buf[0]
-        if all(v == val for v in self._buf):
-            # small cooldown to prevent double fires on rerun frames
-            if now - self.last_accept_time < self.COOLDOWN_SEC:
-                return False
-            self.last_accept_time = now
-            return True
-        return False
+        self.last_qr = None
 
     def recv(self, frame):
         img = frame.to_ndarray(format="bgr24")
-        H, W = img.shape[:2]
-        frame_area = float(H * W)
 
-        # Try MULTI
+        # Try multi first
         ok, decoded_info, points, _ = self.det.detectAndDecodeMulti(img)
-        cands = []
-        if ok and points is not None and len(points) == len(decoded_info):
-            for data, pts in zip(decoded_info, points):
-                if not data or pts is None:
-                    continue
-                # area filter
-                ptsi = pts.astype(int)
-                area = cv.contourArea(ptsi)
-                if area / frame_area < self.MIN_AREA_FRAC:
-                    continue
-                if self._valid_payload(data):
-                    cands.append((data.strip(), ptsi))
-
-        # Fallback SINGLE (only if multi yielded nothing)
-        if not cands:
+        if not ok:
             data, pts, _ = self.det.detectAndDecode(img)
-            if data and pts is not None:
-                ptsi = pts.astype(int)
-                area = cv.contourArea(ptsi)
-                if area / frame_area >= self.MIN_AREA_FRAC and self._valid_payload(data):
-                    cands.append((data.strip(), ptsi))
+            decoded_info = [data] if data else []
+            points = [pts] if pts is not None and data else None
 
-        # Draw any candidates we saw (debug)
-        for _, ptsi in cands:
-            cv.polylines(img, [ptsi], True, (0, 255, 255), 2)
+        # draw polygon(s)
+        if points is not None and len(points) > 0:
+            for pts in points:
+                if pts is None or len(pts) == 0:
+                    continue
+                cv.polylines(img, [pts.astype(int)], True, (0, 255, 255), 2)
 
-        now = time.monotonic()
+        # handle found QR(s)
+        for data in decoded_info:
+            if not data:
+                continue
+            qr_data = data.strip()
+            if self.last_qr == qr_data:
+                break  # debounce same QR spam
+            self.last_qr = qr_data
 
-        # Take the largest valid candidate this frame (if multiple)
-        if cands:
-            data, ptsi = max(cands, key=lambda it: cv.contourArea(it[1]))
-            self._buf.append(data)
+            parts = qr_data.split("|")
+            if len(parts) >= 2:
+                student_id, name = parts[0].strip(), parts[1].strip()
 
-            # Show what we're seeing
-            x, y = ptsi[0]
-            cv.putText(img, f"{data[:28]}...", (int(x), max(20, int(y) - 10)),
-                       cv.FONT_HERSHEY_SIMPLEX, 0.6, (0, 200, 255), 2)
-
-            if self._accept_if_stable(now):
-                # Confirmed decode: look up in Excel and set session state
-                qr_data = self._buf[-1]
-                sid, name = [p.strip() for p in qr_data.split("|", 1)]
                 try:
                     df = pd.read_excel("studentdb.xlsx")
-                    match = df[(df["student_id"] == sid) & (df["name"] == name)]
-                    if not match.empty:
-                        course = match.iloc[0]["course"]
-                        img_path = str(match.iloc[0]["image_path"])
-                        if os.path.exists(img_path):
-                            with open(img_path, "rb") as f:
-                                image_bytes = f.read()
-                            st.session_state.update({
-                                "student_id": sid,
-                                "name": name,
-                                "course": course,
-                                "image_path": image_bytes,
-                                "qr_found": True,
-                            })
-                        else:
-                            st.session_state["qr_error"] = f"Image file not found: {img_path}"
-                    else:
-                        st.session_state["qr_error"] = "No match found in Excel."
                 except Exception as e:
-                    st.session_state["qr_error"] = f"DB error: {e}"
-                # Clear buffer after a decision
-                self._buf.clear()
+                    cv.putText(
+                        img, f"DB error: {e}", (10, 30), cv.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                    break
 
-        msg = "Scanning for QR..." if not st.session_state.get("qr_found") else "QR found!"
-        cv.putText(img, msg, (10, 30), cv.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+                match = df[(df["student_id"] == student_id)
+                           & (df["name"] == name)]
+                if not match.empty:
+                    course = match.iloc[0]["course"]
+                    img_path = str(match.iloc[0]["image_path"])
+                    if os.path.exists(img_path):
+                        with open(img_path, "rb") as f:
+                            image_bytes = f.read()
+                        # Update session state to advance the flow
+                        with qr_lock:
+                            st.session_state["student_id"] = student_id
+                            st.session_state["name"] = name
+                            st.session_state["course"] = course
+                            st.session_state["image_path"] = image_bytes
+                            st.session_state["qr_found"] = True
+                    else:
+                        with qr_lock:
+                            st.session_state["qr_error"] = f"Image file not found: {img_path}"
+                else:
+                    with qr_lock:
+                        st.session_state["qr_error"] = "No match found in Excel."
+
+        # HUD
+        msg = "Scanning for QR..." if not st.session_state.get(
+            "qr_found") else "QR found!"
+        cv.putText(img, msg, (10, 30), cv.FONT_HERSHEY_SIMPLEX,
+                   0.8, (0, 255, 0), 2)
+
         return av.VideoFrame.from_ndarray(img, format="bgr24")
 
 
