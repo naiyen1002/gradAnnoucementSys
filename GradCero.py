@@ -598,8 +598,6 @@ def announce_name(student_name):
 # Main UI
 # ========================
 
-Main UI
-
 st.set_page_config(
     page_title="Graduation Ceremony System",
     page_icon="🎓",
