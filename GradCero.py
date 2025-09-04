@@ -31,8 +31,6 @@ from PIL import Image
 #     # If your campus network is strict, add a TURN server here.
 # }
 
-
-
 def webcam_bgr(key: str):
     """Return a BGR np.ndarray frame from streamlit-webcam, or None until available."""
     img = webcam(key=key)  # shows the widget and returns a frame after permission
