@@ -14,7 +14,6 @@ face_recognition @ git+https://github.com/naiyen1002/face_recognition
 pyzbar @ git+https://github.com/naiyen1002/pyzbar.git
 streamlit-webrtc
 opencv-python-headless
-av
 streamlit-webcam @ git+https://github.com/naiyen1002/streamlit-webcam.git
 
 

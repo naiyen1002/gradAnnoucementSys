@@ -25,7 +25,6 @@ from gtts import gTTS
 from io import BytesIO
 from streamlit_webrtc import webrtc_streamer, WebRtcMode, VideoProcessorBase
 import threading
-import av
 from streamlit_autorefresh import st_autorefresh
 from streamlit_webcam import webcam
 from PIL import Image
