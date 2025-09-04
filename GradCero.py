@@ -23,9 +23,6 @@ from streamlit_option_menu import option_menu
 from background import set_bg
 from gtts import gTTS
 from io import BytesIO
-from streamlit_webrtc import webrtc_streamer, WebRtcMode, VideoProcessorBase
-import threading
-from streamlit_autorefresh import st_autorefresh
 from streamlit_webcam import webcam
 from PIL import Image
 

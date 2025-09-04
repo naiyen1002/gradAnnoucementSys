@@ -12,8 +12,6 @@ gTTS
 openpyxl
 face_recognition @ git+https://github.com/naiyen1002/face_recognition
 pyzbar @ git+https://github.com/naiyen1002/pyzbar.git
-streamlit-webrtc
-opencv-python-headless
 streamlit-webcam @ git+https://github.com/naiyen1002/streamlit-webcam.git
 
 
