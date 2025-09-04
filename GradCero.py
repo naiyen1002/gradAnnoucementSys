@@ -23,7 +23,7 @@ from streamlit_option_menu import option_menu
 from background import set_bg
 from gtts import gTTS
 from io import BytesIO
-from streamlit_webcam import webcam
+from webcam import webcam
 from PIL import Image
 
 # RTC_CONFIGURATION = {
